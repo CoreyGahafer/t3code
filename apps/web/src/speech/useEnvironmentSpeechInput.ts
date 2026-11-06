@@ -365,7 +365,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     };
   }, [prepared]);
   const currentStatus = status?.prepared === prepared ? status.value : null;
-  const setupModelId = setup.model?.id ?? (currentStatus?.supported ? currentStatus.modelId : null);
+  const setupModelId = setup.model?.id;
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- polls download progress while the setup dialog owns an active model download
   useEffect(() => {
@@ -379,7 +379,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         .then((result) => {
           if (disposed) return;
           const model = result.models.find((candidate) => candidate.id === setupModelId) ?? null;
-          setSetup((current) => ({ ...current, model }));
+          if (model) setSetup((current) => ({ ...current, model }));
         })
         .catch(() => undefined)
         .finally(() => {
@@ -450,12 +450,12 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     if (!stillCurrent()) return;
     setStatus({ prepared, value: latestStatus });
     if (latestStatus.supported && latestStatus.state === "missing-model") {
-      const { models } = await runEnvironmentSpeech(getEnvironmentSpeechModels(prepared)).catch(
-        () => ({ models: [] }),
+      const catalog = await runEnvironmentSpeech(getEnvironmentSpeechModels(prepared)).catch(
+        () => null,
       );
       if (!stillCurrent()) return;
       setQueuedStart(null);
-      const choice = chooseSetupSpeechModel(models, {
+      const choice = chooseSetupSpeechModel(catalog?.models ?? [], {
         selectedModelId: latestStatus.modelId,
         intent: latestRef.current.clientSettings.speechLanguage,
         preferred: preferredSpeechLanguages(),
@@ -465,6 +465,11 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         open: true,
         model: choice?.model ?? null,
         language: choice?.language ?? null,
+        error: choice
+          ? null
+          : catalog
+            ? "No model matches your language. Choose a model or change the language in Voice settings."
+            : "Could not load transcription models. Check the connection and try again in Voice settings.",
       });
       return;
     }
