@@ -12,17 +12,20 @@ import {
 } from "@t3tools/client-runtime/voice-input";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import type { SpeechTranscriptionOptions, SpeechStreamText } from "@t3tools/contracts";
-import type { CloudSpeechProvider } from "@t3tools/contracts";
+import type { CloudSpeechModelId, CloudSpeechProvider } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 import { runtime } from "../lib/runtime";
 import { createBrowserPcmCapture } from "./browserPcmCapture";
+import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
 
 const isVoiceTranscriptionError = Schema.is(VoiceTranscriptionError);
 
 export function createBrowserVoiceInputPlatform(input: {
   readonly prepared: PreparedConnection;
   readonly cloudProvider?: CloudSpeechProvider | undefined;
+  /** The exact OpenRouter model the grant names; required with that provider. */
+  readonly cloudModel?: CloudSpeechModelId | undefined;
   readonly hasAudioConsent: () => boolean;
   readonly getTranscriptionOptions: () => SpeechTranscriptionOptions;
   readonly getMicrophoneId: () => string;
@@ -40,25 +43,27 @@ export function createBrowserVoiceInputPlatform(input: {
       try {
         const response = await fetch(uri, { signal: transcriptionSignal });
         const pcm = new Uint8Array(await response.arrayBuffer());
-        const result = await runtime.runPromise(
-          input.cloudProvider
-            ? transcribeCloudPcm(
+        const result = await (input.cloudProvider
+          ? runEnvironmentSpeech(
+              transcribeCloudPcm(
                 input.prepared,
                 input.cloudProvider,
                 pcm,
                 recordingOptions,
                 input.hasAudioConsent,
-              )
-            : transcribeEnvironmentPcm(
+                input.cloudModel,
+              ),
+              { signal: transcriptionSignal },
+            )
+          : runtime.runPromise(
+              transcribeEnvironmentPcm(
                 input.prepared,
                 pcm,
                 recordingOptions,
                 input.hasAudioConsent,
               ),
-          {
-            signal: transcriptionSignal,
-          },
-        );
+              { signal: transcriptionSignal },
+            ));
         throwIfVoiceTranscriptionAborted(transcriptionSignal);
         return result.text;
       } catch (cause) {
@@ -72,7 +77,15 @@ export function createBrowserVoiceInputPlatform(input: {
       }
     };
     if (input.cloudProvider) {
-      await runtime.runPromise(requireCloudSpeechKey(input.prepared, input.cloudProvider), options);
+      if (input.cloudProvider === "openrouter" && !input.cloudModel)
+        throw new VoiceTranscriptionError({
+          code: "unavailable",
+          message: "Choose an OpenRouter model in Settings → Voice.",
+        });
+      await runEnvironmentSpeech(
+        requireCloudSpeechKey(input.prepared, input.cloudProvider),
+        options,
+      );
       throwIfVoiceTranscriptionAborted(options.signal);
       return {
         locale: effectiveSpeechLanguage(cloudSpeechLanguages, recordingOptions.speechLanguage),
