@@ -1,3 +1,4 @@
+import { AUTO_MODEL } from "../orchestration-v2/NativeAutoRouting.ts";
 import { pipe } from "effect/Function";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -655,8 +656,18 @@ export const probeCodexSkillsForCwd = Effect.fn("probeCodexSkillsForCwd")(functi
   return parseCodexSkillsListResponse(skillsResponse, input.cwd);
 });
 
+function autoCodexModels(
+  models: ServerProvider["models"],
+  settings: CodexSettings,
+): ServerProvider["models"] {
+  const concrete = models.filter((model) => model.slug !== AUTO_MODEL);
+  return settings.nativeAutoEnabled && settings.nativeAutoApproved
+    ? [...concrete, { slug: AUTO_MODEL, name: "Auto", isCustom: true, capabilities: null }]
+    : concrete;
+}
+
 const emptyCodexModelsFromSettings = (codexSettings: CodexSettings): ServerProvider["models"] =>
-  appendCustomCodexModels([], codexSettings.customModels);
+  autoCodexModels(appendCustomCodexModels([], codexSettings.customModels), codexSettings);
 
 const makePendingCodexProvider = Effect.fn("CodexProvider.makePendingCodexProvider")(function* (
   codexSettings: CodexSettings,
@@ -863,7 +874,10 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     enabled: codexSettings.enabled,
     checkedAt,
     models: pipe(
-      appendCustomCodexModels(snapshot.models ?? [], codexSettings.customModels),
+      autoCodexModels(
+        appendCustomCodexModels(snapshot.models ?? [], codexSettings.customModels),
+        codexSettings,
+      ),
       applyPreferredCodexDefaultModel,
       (models) => applyConfiguredCodexServiceTier(models, snapshot.serviceTier),
     ),

@@ -1,3 +1,4 @@
+import { AUTO_MODEL } from "../orchestration-v2/NativeAutoRouting.ts";
 import {
   CommandId,
   type RunId,
@@ -1331,6 +1332,7 @@ const make = Effect.gen(function* () {
 
   const resolveTarget = Effect.fn("OrchestratorMcpService.resolveTarget")(function* (input: {
     readonly parent: Pick<OrchestrationV2ThreadProjection, "thread">;
+    readonly inheritedSelection?: ModelSelection;
     readonly target: OrchestratorMcpTarget | undefined;
     readonly providers: ReadonlyArray<ServerProvider>;
     /** Receipt replays bypass current settings because they start no work. Dispatch must reuse the checked command ID. */
@@ -1410,7 +1412,7 @@ const make = Effect.gen(function* () {
       );
     }
 
-    const inheritedSelection = input.parent.thread.modelSelection;
+    const inheritedSelection = input.inheritedSelection ?? input.parent.thread.modelSelection;
     const requestedModel = input.target?.model;
     const model =
       requestedModel ??
@@ -2441,6 +2443,10 @@ const make = Effect.gen(function* () {
       const isRetryOfAcceptedDelegation = yield* threadManagement.hasReceipt(commandId);
       const target = yield* resolveTargetRechecking({
         parent,
+        inheritedSelection:
+          parent.thread.modelSelection.model === AUTO_MODEL
+            ? parentRun.modelSelection
+            : parent.thread.modelSelection,
         target: input.target,
         providers,
         skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
@@ -2848,6 +2854,10 @@ const make = Effect.gen(function* () {
                 : null;
               const target = yield* resolveTargetRechecking({
                 parent,
+                inheritedSelection:
+                  parent.thread.modelSelection.model === AUTO_MODEL
+                    ? parentRun.modelSelection
+                    : parent.thread.modelSelection,
                 target:
                   committedThread === null
                     ? request.target

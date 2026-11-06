@@ -186,6 +186,23 @@ describe("CodexAdapterV2 runtime policy", () => {
       }),
   );
 
+  it.effect("rejects the reserved Auto alias before constructing a native turn", () =>
+    Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        CodexAdapterV2.buildCodexTurnStartParams({
+          nativeThreadId: "native-auto-rejected",
+          codexInput: [{ type: "text", text: "implement that" }],
+          runtimePolicy: { runtimeMode: "auto", interactionMode: "default", cwd: null },
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "t3-auto" },
+        }),
+      );
+      assert.isTrue(Exit.isFailure(exit));
+      if (Exit.isFailure(exit)) {
+        assert.include(String(Cause.squash(exit.cause)), "disabled pending evaluation");
+      }
+    }),
+  );
+
   it.effect("derives concrete Codex turn policies from every T3 runtime mode", () =>
     Effect.gen(function* () {
       const build = (

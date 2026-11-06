@@ -699,6 +699,15 @@ export class ProviderAdapterV2 extends Context.Service<
   {
     readonly instanceId: ProviderInstanceId;
     readonly driver: ProviderDriverKind;
+    readonly resolveAutoModel?: (input: {
+      readonly decisionId: string;
+      readonly selection: ModelSelection;
+      readonly messages: ReadonlyArray<{
+        readonly role: "user" | "assistant";
+        readonly text: string;
+        readonly attachmentCount: number;
+      }>;
+    }) => Effect.Effect<ModelSelection, Error>;
     readonly getCapabilities: () => Effect.Effect<
       OrchestrationV2ProviderCapabilities,
       ProviderAdapterV2Error
