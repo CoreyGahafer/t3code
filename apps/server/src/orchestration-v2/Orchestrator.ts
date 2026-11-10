@@ -6510,6 +6510,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const incomingMessage = { ...command, delegatedCompletion };
     if (
       shouldQueue &&
+      !autoIntent &&
       command.modelSelection === undefined &&
       goalStopRunId === undefined &&
       !followsCurrentConversation(incomingMessage) &&
