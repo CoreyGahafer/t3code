@@ -29,6 +29,35 @@ const v2TableCount = Effect.gen(function* () {
 });
 
 describe("runMigrations", () => {
+  it.effect("upgrades the fork's original budget migration without losing reservations", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 80 });
+      yield* sql`CREATE TABLE native_auto_evaluation_reservations (
+        request_id TEXT PRIMARY KEY, pricing_revision TEXT NOT NULL,
+        maximum_microusd INTEGER NOT NULL CHECK(maximum_microusd > 0),
+        actual_microusd INTEGER CHECK(actual_microusd >= 0)
+      )`;
+      yield* sql`INSERT INTO native_auto_evaluation_reservations VALUES ('kept', 'v1', 100, NULL)`;
+      yield* sql`INSERT INTO effect_sql_migrations (migration_id, name)
+        VALUES (81, 'NativeAutoEvaluationBudget')`;
+      assert.deepStrictEqual(yield* runMigrations(), [
+        [81, "ProjectionMessageSearchText"],
+        [82, "NativeAutoEvaluationBudget"],
+      ]);
+      assert.deepStrictEqual(yield* sql`SELECT * FROM native_auto_evaluation_reservations`, [
+        {
+          request_id: "kept",
+          pricing_revision: "v1",
+          maximum_microusd: 100,
+          actual_microusd: null,
+        },
+      ]);
+      yield* sql`SELECT search_text FROM orchestration_v2_projection_messages`;
+      assert.deepStrictEqual(yield* runMigrations(), []);
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
   it.effect("refuses to start when another migration took a V2 id", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
