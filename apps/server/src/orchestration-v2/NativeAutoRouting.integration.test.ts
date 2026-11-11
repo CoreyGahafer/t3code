@@ -8,6 +8,9 @@ import {
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -234,3 +237,108 @@ it.effect("persists a concrete route before provider startup and retains saved A
     ),
   );
 });
+
+it.effect(
+  "reopens durable Auto routes for queue promotion and restart continuation without classification",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "native-auto-restart-" });
+      const threadId = ThreadId.make("thread:auto-restart");
+      let classifications = 0;
+      const registry = ProviderAdapterRegistry.layerFromAdapters([
+        {
+          instanceId,
+          driver: ProviderDriverKind.make("codex"),
+          getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
+          planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" as const }),
+          resolveAutoModel: (input) =>
+            Effect.sync(() => {
+              classifications++;
+              return autoSelection(input.selection, "mechanical");
+            }),
+          openSession: () => Effect.die("No provider work during admission proof"),
+        },
+      ]);
+      const database = SqlitePersistence.layerFromPath(path.join(directory, "state.sqlite")).pipe(
+        Layer.provide(NodeServices.layer),
+      );
+      const runtime = Layer.mergeAll(
+        ProjectionStore.layer.pipe(Layer.provide(database)),
+        ProviderReplayHarness.layerWithRegistry({ name: "native-auto-restart" }, registry, {
+          databaseLayer: database,
+          runEffectWorker: false,
+        }),
+      );
+      const saved = yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const store = yield* ProjectionStore.ProjectionStoreV2;
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("restart-create"),
+          threadId,
+          projectId: ProjectId.make("project:auto-restart"),
+          title: "Auto restart",
+          modelSelection: { instanceId, model: "t3-auto" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("restart-message"),
+          threadId,
+          messageId: MessageId.make("restart-message"),
+          text: "Rename the constant",
+          attachments: [],
+          dispatchMode: { type: "defer_start" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const run = (yield* store.getThreadProjection(threadId)).runs[0]!;
+        yield* store.apply({
+          id: EventId.make("restart-queue"),
+          type: "run.updated",
+          threadId,
+          occurredAt: yield* DateTime.now,
+          payload: { ...run, status: "queued", startedAt: null, queueHeld: true },
+        });
+        return run;
+      }).pipe(Effect.provide(runtime));
+      assert.equal(classifications, 1);
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const store = yield* ProjectionStore.ProjectionStoreV2;
+        const reopened = yield* store.getThreadProjection(threadId);
+        assert.equal(reopened.thread.modelSelection.model, "t3-auto");
+        assert.deepEqual(reopened.runs[0]?.modelSelection, saved.modelSelection);
+        assert.isTrue(reopened.runs[0]?.autoRoute);
+        yield* orchestrator.dispatch({
+          type: "queued-run.start",
+          commandId: CommandId.make("restart-promote"),
+          threadId,
+          runId: saved.id,
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("restart-continue"),
+          threadId,
+          messageId: MessageId.make("restart-continue"),
+          text: "Continue after restart",
+          attachments: [],
+          restartContinuationOfRunId: saved.id,
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "system",
+          creationSource: "server",
+        });
+        const continued = yield* store.getThreadProjection(threadId);
+        assert.deepEqual(continued.runs.at(-1)?.modelSelection, saved.modelSelection);
+        assert.isTrue(continued.runs.at(-1)?.autoRoute);
+        assert.equal(classifications, 1);
+      }).pipe(Effect.provide(runtime));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
