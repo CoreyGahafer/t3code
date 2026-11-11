@@ -1,3 +1,4 @@
+import { AUTO_MODEL } from "../orchestration-v2/NativeAutoRouting.ts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -227,6 +228,11 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     TextGenerationError,
     S["DecodingServices"]
   > {
+    if (modelSelection.model === AUTO_MODEL)
+      return yield* new TextGenerationError({
+        operation,
+        detail: "Auxiliary tasks require a concrete model.",
+      });
     const imagePaths = yield* materializeImageAttachments(attachments);
     const schemaJson = yield* encodeJsonForOperation(
       operation,

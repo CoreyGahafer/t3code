@@ -1,3 +1,4 @@
+import { AUTO_MODEL, NativeAutoUnavailable } from "./NativeAutoRouting.ts";
 import type {
   OrchestrationV2ThreadLinkMetadata,
   GuestShareId,
@@ -2029,9 +2030,84 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const queuedMessage = projection.messages.find(
         (candidate) => candidate.id === storedQueuedRun.userMessageId,
       );
-      const modelSelection = queuedRunModelSelection(projection, storedQueuedRun);
+      let modelSelection = queuedRunModelSelection(projection, storedQueuedRun);
+      const restartSource = projection.runs.find(
+        (run) => run.id === storedQueuedRun.restartContinuationOfRunId,
+      );
+      const autoIntent =
+        modelSelection.model === AUTO_MODEL ||
+        storedQueuedRun.autoRoute === true ||
+        restartSource?.autoRoute === true;
+      if (autoIntent) {
+        const failAuto = (reason: "child-auto-forbidden" | "evaluation-required" | "missing-pin") =>
+          new OrchestratorDispatchError({
+            commandId: CommandId.make(`command:system:start-queued:${storedQueuedRun.id}`),
+            commandType: "message.dispatch",
+            cause: new NativeAutoUnavailable({ reason }),
+          });
+        if (
+          projection.thread.lineage.relationshipToParent === "subagent" ||
+          projection.thread.delegatedFrom !== undefined ||
+          projection.thread.lineage.sideChat === true ||
+          queuedMessage?.scheduledTaskId !== undefined ||
+          storedQueuedRun.delegatedTaskId !== undefined
+        )
+          return yield* failAuto("child-auto-forbidden");
+        const continuation =
+          storedQueuedRun.restartContinuationOfRunId !== undefined
+            ? projection.runs.find((run) => run.id === storedQueuedRun.restartContinuationOfRunId)
+            : followsCurrentConversation(queuedMessage)
+              ? projection.runs.findLast((run) => run.id !== storedQueuedRun.id && run.autoRoute)
+              : undefined;
+        if (
+          storedQueuedRun.restartContinuationOfRunId !== undefined ||
+          followsCurrentConversation(queuedMessage)
+        ) {
+          if (!continuation || continuation.modelSelection.model === AUTO_MODEL)
+            return yield* failAuto("missing-pin");
+          modelSelection = continuation.modelSelection;
+        } else if (modelSelection.model === AUTO_MODEL) {
+          const adapter = yield* providerAdapters
+            .get(modelSelection.instanceId)
+            .pipe(Effect.mapError(() => failAuto("evaluation-required")));
+          if (!adapter.resolveAutoModel) return yield* failAuto("evaluation-required");
+          const history = yield* projectionStore.getThreadRecords(threadId, ["messages"], {
+            messageRunIds: projection.runs
+              .filter((run) => run.ordinal <= storedQueuedRun.ordinal)
+              .slice(-4)
+              .map((run) => run.id),
+            messageRoles: ["user", "assistant"],
+          });
+          const currentIndex = history.messages.findIndex(
+            (message) => message.id === storedQueuedRun.userMessageId,
+          );
+          modelSelection = yield* adapter
+            .resolveAutoModel({
+              decisionId: storedQueuedRun.id,
+              selection: modelSelection,
+              messages: (currentIndex < 0 ? [] : history.messages.slice(0, currentIndex + 1))
+                .filter((message) => message.role !== "system")
+                .map((message) => ({
+                  role: message.role as "user" | "assistant",
+                  text: message.text,
+                  attachmentCount: message.attachments.length,
+                })),
+            })
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestratorDispatchError({
+                    commandId: CommandId.make(`command:system:start-queued:${storedQueuedRun.id}`),
+                    commandType: "message.dispatch",
+                    cause,
+                  }),
+              ),
+            );
+        }
+      }
       const queuedRun = {
         ...storedQueuedRun,
+        ...(autoIntent ? { autoRoute: true } : {}),
         modelSelection,
         providerInstanceId: modelSelection.instanceId,
       };
@@ -2656,7 +2732,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         : "Provider or model selection changed.";
       yield* writeSystemEvents(
         [
-          ...(selectionChanged
+          ...(selectionChanged && !autoIntent
             ? [
                 {
                   type:
@@ -5296,6 +5372,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       | "turnItems"
     >;
     readonly modelSelection: ModelSelection;
+    readonly autoIntent?: boolean;
     readonly targetRunId: OrchestrationV2Run["id"];
     readonly messageId: OrchestrationV2ConversationMessage["id"];
     readonly text: string;
@@ -5562,6 +5639,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const instanceChanged =
         input.projection.thread.providerInstanceId !== input.modelSelection.instanceId;
       if (
+        !input.autoIntent &&
         input.delegatedCompletion === undefined &&
         input.notification === undefined &&
         (instanceChanged ||
@@ -5897,7 +5975,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         payload: { ...currentRootNode, status: "interrupted", completedAt: now },
       });
     }
-    if (selectionChanged) {
+    if (selectionChanged && !input.autoIntent) {
       yield* emitEvent({
         type: providerInstanceChanged
           ? "thread.provider-switched"
@@ -6250,6 +6328,79 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command.dispatchMode,
       command.deliveryIntent,
     );
+    const autoIntent =
+      modelSelection.model === AUTO_MODEL ||
+      projection.runs.some(
+        (run) => run.id === command.restartContinuationOfRunId && run.autoRoute === true,
+      );
+    if (autoIntent) {
+      const unavailable = (
+        reason: "child-auto-forbidden" | "evaluation-required" | "missing-pin",
+      ) =>
+        new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: new NativeAutoUnavailable({ reason }),
+        });
+      if (
+        projection.thread.lineage.relationshipToParent === "subagent" ||
+        projection.thread.delegatedFrom !== undefined ||
+        projection.thread.lineage.sideChat === true ||
+        command.scheduledTaskId !== undefined ||
+        continuedTaskId !== undefined
+      )
+        return yield* unavailable("child-auto-forbidden");
+      const continuationId =
+        command.restartContinuationOfRunId ??
+        (dispatchMode.type === "steer_active" || dispatchMode.type === "restart_active"
+          ? dispatchMode.targetRunId
+          : undefined);
+      const continuation =
+        continuationId !== undefined
+          ? projection.runs.find((run) => run.id === continuationId)
+          : automaticWake ||
+              isNativeMaintenanceCommand(command) ||
+              command.idleCompaction !== undefined
+            ? projection.runs.findLast((run) => run.autoRoute)
+            : undefined;
+      if (
+        continuationId !== undefined ||
+        automaticWake ||
+        isNativeMaintenanceCommand(command) ||
+        command.idleCompaction !== undefined
+      ) {
+        if (!continuation || continuation.modelSelection.model === AUTO_MODEL)
+          return yield* unavailable("missing-pin");
+        modelSelection = continuation.modelSelection;
+      } else {
+        const adapter = yield* providerAdapters
+          .get(modelSelection.instanceId)
+          .pipe(mapDispatchError(command));
+        if (!adapter.resolveAutoModel) return yield* unavailable("evaluation-required");
+        const history = yield* projectionStore
+          .getThreadRecords(command.threadId, ["messages"], {
+            messageRunIds: projection.runs.slice(-4).map((run) => run.id),
+            messageRoles: ["user", "assistant"],
+          })
+          .pipe(mapDispatchError(command));
+        modelSelection = yield* adapter
+          .resolveAutoModel({
+            decisionId: command.commandId,
+            selection: modelSelection,
+            messages: [
+              ...history.messages
+                .filter((message) => message.role !== "system")
+                .map((message) => ({
+                  role: message.role as "user" | "assistant",
+                  text: message.text,
+                  attachmentCount: message.attachments.length,
+                })),
+              { role: "user", text: command.text, attachmentCount: command.attachments.length },
+            ],
+          })
+          .pipe(mapDispatchError(command));
+      }
+    }
     if (dispatchMode.type === "steer_active" || dispatchMode.type === "restart_active") {
       const targetRunId = dispatchMode.targetRunId;
       const target = projection.runs.find((run) => run.id === targetRunId);
@@ -6526,6 +6677,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (dispatchMode.type === "steer_active" || dispatchMode.type === "restart_active") {
       yield* ensureGoalCommandSupported(command, command, modelSelection.instanceId);
       yield* dispatchSteerIntoRun({
+        autoIntent,
         command,
         events,
         effects,
@@ -6583,6 +6735,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const incomingMessage = { ...command, delegatedCompletion };
     if (
       shouldQueue &&
+      !autoIntent &&
       command.modelSelection === undefined &&
       queuedRunStop === undefined &&
       !followsCurrentConversation(incomingMessage) &&
@@ -6732,6 +6885,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ordinal,
         providerInstanceId: modelSelection.instanceId,
         modelSelection,
+        ...(autoIntent ? { autoRoute: true } : {}),
         providerThreadId: queuedProviderThread.id,
         userMessageId: command.messageId,
         rootNodeId,
@@ -6934,8 +7088,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     );
     const now = yield* DateTime.now;
     if (
-      !modelSelectionsEqual(projection.thread.modelSelection, modelSelection) ||
-      projection.thread.providerInstanceId !== modelSelection.instanceId
+      !autoIntent &&
+      (!modelSelectionsEqual(projection.thread.modelSelection, modelSelection) ||
+        projection.thread.providerInstanceId !== modelSelection.instanceId)
     ) {
       yield* emit(
         events,
@@ -7133,6 +7288,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ordinal,
         providerInstanceId: modelSelection.instanceId,
         modelSelection,
+        ...(autoIntent ? { autoRoute: true } : {}),
         providerThreadId,
         userMessageId: command.messageId,
         rootNodeId,

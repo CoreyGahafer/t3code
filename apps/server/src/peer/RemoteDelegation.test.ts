@@ -1102,6 +1102,13 @@ it.effect("a task named only by environment inherits the parent's model, within 
       yield* linkTo(a.links, b, "auto-accept-edits");
       yield* seedParent(a);
 
+      yield* a.orchestrator.dispatch({
+        type: "thread.model-selection.set",
+        commandId: CommandId.make("auto-picker"),
+        threadId: parentThreadId,
+        modelSelection: { ...modelSelection, model: "t3-auto" },
+      });
+
       const result = yield* a.call("delegate_task", {
         task: "Run the suite on the box.",
         target: { environmentId: box.environmentId },

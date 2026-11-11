@@ -1,3 +1,4 @@
+import { makeNativeAutoDecisions } from "../../orchestration-v2/NativeAutoDecisions.ts";
 import { CodexSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -211,9 +212,19 @@ export const CodexDriver: ProviderDriver<
         accentColor,
         environment,
         enabled,
-        config,
+        config: { ...config, homePath: homeLayout.sharedHomePath },
       },
       {
+        resolveAutoModel: yield* makeNativeAutoDecisions({
+          settings: effectiveConfig,
+          logDirectory: pathService.join(
+            (yield* ServerConfig.ServerConfig).stateDir,
+            "native-auto-decisions",
+            instanceId,
+          ),
+          environment: processEnv,
+          home: homeLayout.effectiveHomePath ?? homeLayout.sharedHomePath,
+        }),
         onUsageLimits: (update) => snapshot.applyUsageLimits(update),
         compatibility: installation.compatibility,
       },

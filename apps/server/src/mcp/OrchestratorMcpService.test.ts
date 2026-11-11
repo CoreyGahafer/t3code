@@ -3225,7 +3225,19 @@ describe("OrchestratorMcpService provider resolution", () => {
               getThreadRecords: (threadId) =>
                 Effect.succeed(
                   threadId === parentThreadId
-                    ? parentProjection(commands.length > 0 ? [task] : [], inherited)
+                    ? (() => {
+                        const projection = parentProjection(
+                          commands.length > 0 ? [task] : [],
+                          inherited,
+                        );
+                        return {
+                          ...projection,
+                          thread: {
+                            ...projection.thread,
+                            modelSelection: { ...inherited, model: "t3-auto" },
+                          },
+                        };
+                      })()
                     : childProjection,
                 ),
               dispatch: (command) =>

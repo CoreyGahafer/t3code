@@ -85,6 +85,8 @@ import Migration0079 from "./Migrations/079_DelegatedRecoveryIndexes.ts";
 import Migration0080 from "./Migrations/080_ScheduledTaskThreadMode.ts";
 import Migration0081 from "./Migrations/081_ProjectionMessageSearchText.ts";
 
+import Migration0082 from "./Migrations/082_NativeAutoEvaluationBudget.ts";
+
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
   [2, "OrchestrationCommandReceipts", Migration0002],
@@ -168,6 +170,7 @@ const migrationEntries = [
   [79, "DelegatedRecoveryIndexes", Migration0079],
   [80, "ScheduledTaskThreadMode", Migration0080],
   [81, "ProjectionMessageSearchText", Migration0081],
+  [82, "NativeAutoEvaluationBudget", Migration0082],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -192,6 +195,11 @@ const assertV2MigrationsCanRun = Effect.fn("assertV2MigrationsCanRun")(function*
     SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'
   `;
   if (tables.length === 0) return;
+  if (throughId === undefined || throughId >= 81) {
+    // The fork used 81 before upstream; retain its table while replaying upstream's 81.
+    yield* sql`DELETE FROM effect_sql_migrations
+      WHERE migration_id = 81 AND name = 'NativeAutoEvaluationBudget'`;
+  }
   const recorded = yield* sql<{
     readonly migration_id: number;
     readonly name: string;

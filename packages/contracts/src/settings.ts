@@ -729,13 +729,32 @@ export const CodexSettings = makeProviderSettingsSchema(
         description: "Additional CLI arguments passed to codex app-server on session start.",
       }),
     ),
+    nativeAutoEnabled: Schema.optional(Schema.Boolean).pipe(
+      Schema.annotateKey({
+        title: "Native Auto routing",
+        description: "Opt in to native Auto after evaluation approval.",
+      }),
+    ),
+    nativeAutoApproved: Schema.optional(Schema.Boolean).pipe(
+      Schema.annotateKey({
+        title: "Native Auto evaluation approved",
+        description: "Enable only after the paid evaluation and Astra usage have been approved.",
+      }),
+    ),
     customModels: Schema.Array(CustomModelSetting).pipe(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
   },
   {
-    order: ["binaryPath", "homePath", "shadowHomePath", "launchArgs"],
+    order: [
+      "binaryPath",
+      "homePath",
+      "shadowHomePath",
+      "launchArgs",
+      "nativeAutoEnabled",
+      "nativeAutoApproved",
+    ],
   },
 );
 export type CodexSettings = typeof CodexSettings.Type;

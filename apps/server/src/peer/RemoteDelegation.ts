@@ -1,3 +1,4 @@
+import { AUTO_MODEL } from "../orchestration-v2/NativeAutoRouting.ts";
 import {
   CommandId,
   type EnvironmentId,
@@ -223,7 +224,10 @@ const make = Effect.gen(function* () {
       }
       // The provider and model inherit as they do for a task here. Another
       // provider there has no model to inherit, so the caller names one.
-      const inherited = parent.thread.modelSelection;
+      const inherited =
+        parent.thread.modelSelection.model === AUTO_MODEL
+          ? parentRun.modelSelection
+          : parent.thread.modelSelection;
       const instanceId = target.providerInstanceId ?? inherited.instanceId;
       const model =
         target.model ?? (instanceId === inherited.instanceId ? inherited.model : undefined);
