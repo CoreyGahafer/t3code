@@ -226,17 +226,25 @@ try {
   await NodeFSP.writeFile(
     NodePath.join(outputDirectory, "review.json"),
     encode(
-      shuffled.map(({ row }, index) => ({
-        reviewId: index + 1,
-        caseId: row.id,
-        sample: row.sample,
-        rubric: selected.find((fixture) => fixture.id === row.id)?.rubric,
-        answer: row.answer,
-        sourceCode: row.sourceCode,
-        correctness: null,
-        requiredCorrections: null,
-        notes: "",
-      })),
+      shuffled.map(({ row }, index) => {
+        const fixture: EvaluationCase | undefined = selected.find(
+          (fixture) => fixture.id === row.id,
+        );
+        return {
+          reviewId: index + 1,
+          caseId: row.id,
+          sample: row.sample,
+          prompt: fixture?.prompt,
+          history: fixture?.history ?? [],
+          originalSource: fixture?.sourceCode ?? null,
+          rubric: fixture?.rubric,
+          answer: row.answer,
+          sourceCode: row.sourceCode,
+          correctness: null,
+          requiredCorrections: null,
+          notes: "",
+        };
+      }),
     ),
   );
   await NodeFSP.writeFile(

@@ -147,19 +147,21 @@ export const evaluate = Effect.fn("NativeAutoEvaluation.evaluate")(function* (in
               Effect.mapError(() => new EvaluationError({ stage: "usage" })),
             );
             const actualMicroUsd = tokenCost(usage.usage, price);
-            yield* budget.reconcile({ requestId, actualMicroUsd });
-            pending = false;
-            inputTokens += usage.usage.input_tokens;
-            outputTokens += usage.usage.output_tokens;
-            costMicroUsd += actualMicroUsd;
             if (
               actualMicroUsd > maximumMicroUsd ||
               usage.usage.input_tokens > price.maximumInputTokens ||
               usage.usage.output_tokens >
                 (endpoint === "responses" ? input.maximumOutputTokens : price.maximumOutputTokens)
             ) {
+              if (actualMicroUsd > maximumMicroUsd)
+                yield* budget.reconcile({ requestId, actualMicroUsd });
               return yield* new EvaluationError({ stage: "pricing-bounds" });
             }
+            yield* budget.reconcile({ requestId, actualMicroUsd });
+            pending = false;
+            inputTokens += usage.usage.input_tokens;
+            outputTokens += usage.usage.output_tokens;
+            costMicroUsd += actualMicroUsd;
             return raw;
           },
           Effect.tapError(() =>

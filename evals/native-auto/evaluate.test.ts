@@ -4,6 +4,7 @@ import * as Layer from "effect/Layer";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Budget from "../../apps/server/src/orchestration-v2/NativeAutoEvaluationBudget.ts";
 import * as Sqlite from "../../apps/server/src/persistence/Sqlite.ts";
 import { evaluate, EvaluationError, Pricing, tokenCost, type EvaluationRow } from "./evaluate.ts";
@@ -39,7 +40,7 @@ const response = {
     },
   ],
 };
-const layer = Budget.layer.pipe(Layer.provide(Sqlite.layerMemory));
+const layer = Budget.layer.pipe(Layer.provideMerge(Sqlite.layerMemory));
 
 it("prices input and output conservatively without cache discounts or rounding loss", () => {
   assert.equal(tokenCost({ input_tokens: 5, output_tokens: 3 }, price), 11);
@@ -109,7 +110,7 @@ it.effect(
   "stops on ambiguous classifier failures, missing usage, and exceeded pricing bounds without replay",
   () =>
     Effect.gen(function* () {
-      for (const mode of ["transport", "usage", "bounds"] as const) {
+      for (const mode of ["transport", "usage", "bounds", "excess-cost"] as const) {
         const rows: EvaluationRow[] = [];
         let calls = 0;
         const run = evaluate({
@@ -124,7 +125,14 @@ it.effect(
               ? Effect.fail(new EvaluationError({ stage: "transport" }))
               : Effect.succeed({
                   answers: [{ type: "choice", name: "route", choice: "mechanical" }],
-                  ...(mode === "usage" ? {} : { usage: { input_tokens: 101, output_tokens: 0 } }),
+                  ...(mode === "usage"
+                    ? {}
+                    : {
+                        usage: {
+                          input_tokens: mode === "excess-cost" ? 1000 : 101,
+                          output_tokens: 0,
+                        },
+                      }),
                 });
           },
           verify: () => Effect.die("must not execute"),
@@ -137,6 +145,13 @@ it.effect(
         assert.equal(calls, 1);
         assert.equal(rows[0]?.costMicroUsd, null);
         assert.equal(rows[0]?.status, "failed");
+        const sql = yield* SqlClient.SqlClient;
+        const reserved = yield* sql<{
+          maximum_microusd: number;
+          actual_microusd: number | null;
+        }>`SELECT maximum_microusd, actual_microusd FROM native_auto_evaluation_reservations WHERE request_id = ${`test:${mode}:0:auto:decisions`}`;
+        assert.equal(reserved[0]?.maximum_microusd, 300);
+        assert.equal(reserved[0]?.actual_microusd, mode === "excess-cost" ? 1000 : null);
         yield* run.pipe(Effect.flip);
         assert.equal(calls, 1);
       }
