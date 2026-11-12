@@ -12,7 +12,9 @@
     "test-signal": "node --env-file-if-exists=../.env test-signal/run.ts",
     "typecheck": "effect-tsgo tsrs --noEmit",
     "test": "vp test run --config ../vite.config.ts --dir .",
-    "native-auto": "node --env-file-if-exists=../.env native-auto/run.ts"
+    "native-auto": "node --env-file-if-exists=../.env native-auto/run.ts",
+    "native-auto:pilot": "node native-auto/pilot-run.ts",
+    "native-auto:guard": "node native-auto/guard-cli.ts"
   },
   "dependencies": {
     "@effect/platform-node": "catalog:",
