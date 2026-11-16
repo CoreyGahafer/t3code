@@ -4,6 +4,26 @@ Compares the production `classifyAuto` policy with its fixed baseline profile. E
 
 This is an evaluation harness, not rollout approval. It does not run Codex, exercise tools, edit a real repository checkout, measure corrective agent turns, or establish real-repository quality or savings. Those are required follow-up pilot evidence before enabling Auto. Every summary remains inconclusive, even when all objective checks pass.
 
+## Native coding-task pilot
+
+`pnpm native-auto:pilot` runs the separate, prepared five-task repository pilot with a hash-pinned local Codex build supporting request-guard protocol 2. It creates disposable sibling worktrees at the manifest's exact commits, links this checkout's installed dependencies, runs fixed checks, captures diffs and answers, and removes only its own worktrees. Run it from a checkout with dependencies already installed. It never changes installed T3 or Codex settings.
+
+```sh
+pnpm native-auto:pilot --out /absolute/new-evidence-directory \
+  --manifest /absolute/operator/manifest.json --fixtures /absolute/operator \
+  --binary /absolute/local/codex --sha256 <verified-binary-sha256> \
+  --offline-endpoint http://127.0.0.1:<fixture-port> \
+  --review-gate /absolute/operator/review-gate
+```
+
+The operator directory contains the prepared `oracles/queue.integration.test.ts`, `oracles/evaluate.test.ts`, `check-review-export.mjs`, and its `cases.ts`. Keep it and the output directory outside candidate worktrees. Offline mode requires a loopback fixture provider and uses synthetic pricing; its scripted answers are plumbing evidence, never model-quality or billing evidence. The five task IDs and their order are fixed: mechanical, implementation, debugging, review, follow-up. The debugging oracle must fail on its pinned base before execution. The review is read-only; the follow-up resumes that arm's same session and checkout only after the operator's review gate succeeds. The gate receives the review answer's filename and must return zero only for an independently confirmed finding; without a gate the follow-up is recorded as blocked.
+
+Each new user turn, including a factual correction, uses the production classifier with the complete user/assistant conversation. Codex's tool rounds, retries and session history remain native. Each coding task allows one corrective turn after failed fixed checks; its classification and requests are included. Samples alternate arm order. Concrete selections are recorded before dispatch. Blind exports omit arm, route, timing and cost; keep the answer key and raw logs with the operator.
+
+The native guard reserves each HTTP attempt against the existing shared $25 ledger, then acknowledges request-linked usage before releasing a terminal response to Codex. Unknown endpoints, paid hosted tools, explicit cache controls, unknown pricing, nonstandard service tiers, missing usage and invalid bounds fail closed. Ambiguous reservations remain held; a known excess is recorded and halts later admission. The guard executable/configuration run outside candidate write access. This is a trusted coding-task experiment, not containment for malicious tools that deliberately launch their own inference clients.
+
+Paid mode replaces `--offline-endpoint` with `--paid --approve-astra --pricing /absolute/verified-prices.json` and reads `OPENAI_API_KEY` only from the invoking environment. It uses the same `evals/runs/native-auto-budget.sqlite` as the API harness and never resets it. Full model capacities apply when native requests omit output caps. If verified bounds cannot fit $25, preflight refuses before classification. Current conservative Astra capacity bounds exceed that ceiling; do not understate them to force a paid run. Smaller proven request bounds are still required for a practical paid pilot. Price estimates are conservative, not invoice totals, and paid execution requires separate approval.
+
 ## Offline proof
 
 From `evals/`:
